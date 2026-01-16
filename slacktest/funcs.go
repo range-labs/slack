@@ -15,11 +15,9 @@ func (sts *Server) queueForWebsocket(s, hubname string) {
 	channel, err := getHubForServer(hubname)
 	if err != nil {
 		log.Printf("Unable to get server's channels: %s", err.Error())
+	} else {
+		channel.sent <- s
 	}
-	sts.seenOutboundMessages.Lock()
-	sts.seenOutboundMessages.messages = append(sts.seenOutboundMessages.messages, s)
-	sts.seenOutboundMessages.Unlock()
-	channel.sent <- s
 }
 
 func handlePendingMessages(c *websocket.Conn, hubname string) {
@@ -43,9 +41,7 @@ func (sts *Server) postProcessMessage(m, hubname string) {
 		log.Printf("Unable to get server's channels: %s", err.Error())
 		return
 	}
-	sts.seenInboundMessages.Lock()
-	sts.seenInboundMessages.messages = append(sts.seenInboundMessages.messages, m)
-	sts.seenInboundMessages.Unlock()
+	sts.seenInboundMessages.observe(m)
 	// send to firehose
 	channel.seen <- m
 }
@@ -98,6 +94,15 @@ func BotIDFromContext(ctx context.Context) string {
 	return botname
 }
 
+// ServerWSFromContext returns the server websocket endpoint from a provided context
+func ServerWSFromContext(ctx context.Context) string {
+	url, ok := ctx.Value(ServerWSContextKey).(string)
+	if !ok {
+		return "ws://wtf?!"
+	}
+	return url
+}
+
 // generate a full rtminfo response for initial rtm connections
 func generateRTMInfo(ctx context.Context, wsurl string) *fullInfoSlackResponse {
 	rtmInfo := slack.Info{
@@ -136,4 +141,14 @@ func defaultBotInfoJSON(ctx context.Context) string {
 				}
 		}
 		`, botid, botname)
+}
+
+func defaultAppsConnectionsJSON(ctx context.Context) string {
+	url := ServerWSFromContext(ctx)
+	return fmt.Sprintf(`
+               {
+                       "ok":true,
+                       "url": "%s"
+               }
+               `, url)
 }

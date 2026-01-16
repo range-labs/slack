@@ -1,11 +1,14 @@
 package slack
 
 import (
+	"bytes"
 	"encoding/json"
-	"io/ioutil"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"testing"
 )
 
@@ -39,7 +42,6 @@ func TestGetPermalink(t *testing.T) {
 	timeStamp := "p135854651500008"
 
 	http.HandleFunc("/chat.getPermalink", func(rw http.ResponseWriter, r *http.Request) {
-
 		if got, want := r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"; got != want {
 			t.Errorf("request uses unexpected content type: got %s, want %s", got, want)
 		}
@@ -79,9 +81,17 @@ func TestPostMessage(t *testing.T) {
 	}
 
 	blocks := []Block{NewContextBlock("context", NewTextBlockObject(PlainTextType, "hello", false, false))}
-	blockStr := `[{"type":"context","block_id":"context","elements":[{"type":"plain_text","text":"hello"}]}]`
+	blockStr := `[{"type":"context","block_id":"context","elements":[{"type":"plain_text","text":"hello","emoji":false}]}]`
 
 	tests := map[string]messageTest{
+		"OnlyBasicProperties": {
+			endpoint: "/chat.postMessage",
+			opt:      []MsgOption{},
+			expected: url.Values{
+				"channel": []string{"CXXX"},
+				"token":   []string{"testing-token"},
+			},
+		},
 		"Blocks": {
 			endpoint: "/chat.postMessage",
 			opt: []MsgOption{
@@ -107,6 +117,24 @@ func TestPostMessage(t *testing.T) {
 				"attachments": []string{`[{"blocks":` + blockStr + `}]`},
 				"channel":     []string{"CXXX"},
 				"token":       []string{"testing-token"},
+			},
+		},
+		"Metadata": {
+			endpoint: "/chat.postMessage",
+			opt: []MsgOption{
+				MsgOptionMetadata(
+					SlackMetadata{
+						EventType: "testing-event",
+						EventPayload: map[string]interface{}{
+							"id":   13,
+							"name": "testing-name",
+						},
+					}),
+			},
+			expected: url.Values{
+				"metadata": []string{`{"event_type":"testing-event","event_payload":{"id":13,"name":"testing-name"}}`},
+				"channel":  []string{"CXXX"},
+				"token":    []string{"testing-token"},
 			},
 		},
 		"Unfurl": {
@@ -157,6 +185,28 @@ func TestPostMessage(t *testing.T) {
 				"user_auth_message": []string{"Please!"},
 			},
 		},
+		"LinkNames true": {
+			endpoint: "/chat.postMessage",
+			opt: []MsgOption{
+				MsgOptionLinkNames(true),
+			},
+			expected: url.Values{
+				"channel":    []string{"CXXX"},
+				"token":      []string{"testing-token"},
+				"link_names": []string{"true"},
+			},
+		},
+		"LinkNames false": {
+			endpoint: "/chat.postMessage",
+			opt: []MsgOption{
+				MsgOptionLinkNames(false),
+			},
+			expected: url.Values{
+				"channel":    []string{"CXXX"},
+				"token":      []string{"testing-token"},
+				"link_names": []string{"false"},
+			},
+		},
 	}
 
 	once.Do(startServer)
@@ -166,7 +216,7 @@ func TestPostMessage(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			http.DefaultServeMux = new(http.ServeMux)
 			http.HandleFunc(test.endpoint, func(rw http.ResponseWriter, r *http.Request) {
-				body, err := ioutil.ReadAll(r.Body)
+				body, err := io.ReadAll(r.Body)
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 					return
@@ -192,7 +242,7 @@ func TestPostMessageWithBlocksWhenMsgOptionResponseURLApplied(t *testing.T) {
 
 	http.DefaultServeMux = new(http.ServeMux)
 	http.HandleFunc("/response-url", func(rw http.ResponseWriter, r *http.Request) {
-		body, err := ioutil.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 			return
@@ -220,7 +270,7 @@ func TestPostMessageWithBlocksWhenMsgOptionResponseURLApplied(t *testing.T) {
 func TestPostMessageWhenMsgOptionReplaceOriginalApplied(t *testing.T) {
 	http.DefaultServeMux = new(http.ServeMux)
 	http.HandleFunc("/response-url", func(rw http.ResponseWriter, r *http.Request) {
-		body, err := ioutil.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 			return
@@ -247,7 +297,7 @@ func TestPostMessageWhenMsgOptionReplaceOriginalApplied(t *testing.T) {
 func TestPostMessageWhenMsgOptionDeleteOriginalApplied(t *testing.T) {
 	http.DefaultServeMux = new(http.ServeMux)
 	http.HandleFunc("/response-url", func(rw http.ResponseWriter, r *http.Request) {
-		body, err := ioutil.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 			return
@@ -269,4 +319,312 @@ func TestPostMessageWhenMsgOptionDeleteOriginalApplied(t *testing.T) {
 	responseURL := api.endpoint + "response-url"
 
 	_, _, _ = api.PostMessage("CXXX", MsgOptionDeleteOriginal(responseURL))
+}
+
+func TestSendMessageContextRedactsTokenInDebugLog(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+		want  string
+	}{
+		{
+			name:  "regular token",
+			token: "xtest-token-1234-abcd",
+			want:  "xtest-REDACTED",
+		},
+		{
+			name:  "refresh token",
+			token: "xoxe.xtest-token-1234-abcd",
+			want:  "xoxe.xtest-REDACTED",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			once.Do(startServer)
+			buf := bytes.NewBufferString("")
+
+			opts := []Option{
+				OptionAPIURL("http://" + serverAddr + "/"),
+				OptionLog(log.New(buf, "", log.Lshortfile)),
+				OptionDebug(true),
+			}
+			api := New(tt.token, opts...)
+			// Why send the token in the message text too? To test that we're not
+			// redacting substrings in the request which look like a token but aren't.
+			api.SendMessage("CXXX", MsgOptionText(token, false))
+			s := buf.String()
+
+			re := regexp.MustCompile(`token=[\w.-]*`)
+			want := "token=" + tt.want
+			if got := re.FindString(s); got != want {
+				t.Errorf("Logged token in SendMessageContext(): got %q, want %q", got, want)
+			}
+			re = regexp.MustCompile(`text=[\w.-]*`)
+			want = "text=" + token
+			if got := re.FindString(s); got != want {
+				t.Errorf("Logged text in SendMessageContext(): got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestUpdateMessage(t *testing.T) {
+	type messageTest struct {
+		endpoint string
+		opt      []MsgOption
+		expected url.Values
+	}
+	tests := map[string]messageTest{
+		"empty file_ids": {
+			endpoint: "/chat.update",
+			opt:      []MsgOption{},
+			expected: url.Values{
+				"channel": []string{"CXXX"},
+				"token":   []string{"testing-token"},
+				"ts":      []string{"1234567890.123456"},
+			},
+		},
+		"with file_ids": {
+			endpoint: "/chat.update",
+			opt: []MsgOption{
+				MsgOptionFileIDs([]string{"F123", "F456"}),
+			},
+			expected: url.Values{
+				"channel":  []string{"CXXX"},
+				"token":    []string{"testing-token"},
+				"ts":       []string{"1234567890.123456"},
+				"file_ids": []string{`["F123","F456"]`},
+			},
+		},
+	}
+
+	once.Do(startServer)
+	api := New(validToken, OptionAPIURL("http://"+serverAddr+"/"))
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			http.DefaultServeMux = new(http.ServeMux)
+			http.HandleFunc(test.endpoint, func(rw http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				actual, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if !reflect.DeepEqual(actual, test.expected) {
+					t.Errorf("\nexpected: %s\n  actual: %s", test.expected, actual)
+					return
+				}
+			})
+
+			_, _, _, _ = api.UpdateMessage("CXXX", "1234567890.123456", test.opt...)
+		})
+	}
+}
+
+func TestStartStream(t *testing.T) {
+	type messageTest struct {
+		endpoint string
+		opt      []MsgOption
+		expected url.Values
+	}
+	tests := map[string]messageTest{
+		"basic": {
+			endpoint: "/chat.startStream",
+			opt: []MsgOption{
+				MsgOptionTS("1234567890.123456"),
+			},
+			expected: url.Values{
+				"channel":   []string{"CXXX"},
+				"token":     []string{"testing-token"},
+				"thread_ts": []string{"1234567890.123456"},
+			},
+		},
+		"with recipients": {
+			endpoint: "/chat.startStream",
+			opt: []MsgOption{
+				MsgOptionTS("1234567890.123456"),
+				MsgOptionRecipientTeamID("T12345"),
+				MsgOptionRecipientUserID("U12345"),
+			},
+			expected: url.Values{
+				"channel":           []string{"CXXX"},
+				"token":             []string{"testing-token"},
+				"thread_ts":         []string{"1234567890.123456"},
+				"recipient_team_id": []string{"T12345"},
+				"recipient_user_id": []string{"U12345"},
+			},
+		},
+	}
+
+	once.Do(startServer)
+	api := New(validToken, OptionAPIURL("http://"+serverAddr+"/"))
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			http.DefaultServeMux = new(http.ServeMux)
+			http.HandleFunc(test.endpoint, func(rw http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				actual, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if !reflect.DeepEqual(actual, test.expected) {
+					t.Errorf("\nexpected: %s\n  actual: %s", test.expected, actual)
+					return
+				}
+				rw.Header().Set("Content-Type", "application/json")
+				response, _ := json.Marshal(chatResponseFull{
+					Channel:   "CXXX",
+					Timestamp: "1234567890.123456",
+					SlackResponse: SlackResponse{
+						Ok: true,
+					},
+				})
+				rw.Write(response)
+			})
+
+			_, _, _ = api.StartStream("CXXX", test.opt...)
+		})
+	}
+}
+
+func TestAppendStream(t *testing.T) {
+	type messageTest struct {
+		endpoint string
+		opt      []MsgOption
+		expected url.Values
+	}
+	tests := map[string]messageTest{
+		"basic": {
+			endpoint: "/chat.appendStream",
+			opt: []MsgOption{
+				MsgOptionMarkdownText("Hello, world!"),
+			},
+			expected: url.Values{
+				"channel":       []string{"CXXX"},
+				"token":         []string{"testing-token"},
+				"ts":            []string{"1234567890.123456"},
+				"markdown_text": []string{"Hello, world!"},
+			},
+		},
+	}
+
+	once.Do(startServer)
+	api := New(validToken, OptionAPIURL("http://"+serverAddr+"/"))
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			http.DefaultServeMux = new(http.ServeMux)
+			http.HandleFunc(test.endpoint, func(rw http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				actual, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if !reflect.DeepEqual(actual, test.expected) {
+					t.Errorf("\nexpected: %s\n  actual: %s", test.expected, actual)
+					return
+				}
+				rw.Header().Set("Content-Type", "application/json")
+				response, _ := json.Marshal(chatResponseFull{
+					Channel:   "CXXX",
+					Timestamp: "1234567890.123456",
+					SlackResponse: SlackResponse{
+						Ok: true,
+					},
+				})
+				rw.Write(response)
+			})
+
+			_, _, _ = api.AppendStream("CXXX", "1234567890.123456", test.opt...)
+		})
+	}
+}
+
+func TestStopStream(t *testing.T) {
+	type messageTest struct {
+		endpoint string
+		opt      []MsgOption
+		expected url.Values
+	}
+
+	blocks := []Block{NewContextBlock("context", NewTextBlockObject(PlainTextType, "feedback", false, false))}
+	blockStr := `[{"type":"context","block_id":"context","elements":[{"type":"plain_text","text":"feedback","emoji":false}]}]`
+
+	tests := map[string]messageTest{
+		"basic": {
+			endpoint: "/chat.stopStream",
+			opt:      []MsgOption{},
+			expected: url.Values{
+				"channel": []string{"CXXX"},
+				"token":   []string{"testing-token"},
+				"ts":      []string{"1234567890.123456"},
+			},
+		},
+		"with final text and blocks": {
+			endpoint: "/chat.stopStream",
+			opt: []MsgOption{
+				MsgOptionMarkdownText("Final message"),
+				MsgOptionBlocks(blocks...),
+			},
+			expected: url.Values{
+				"channel":       []string{"CXXX"},
+				"token":         []string{"testing-token"},
+				"ts":            []string{"1234567890.123456"},
+				"markdown_text": []string{"Final message"},
+				"blocks":        []string{blockStr},
+			},
+		},
+	}
+
+	once.Do(startServer)
+	api := New(validToken, OptionAPIURL("http://"+serverAddr+"/"))
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			http.DefaultServeMux = new(http.ServeMux)
+			http.HandleFunc(test.endpoint, func(rw http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				actual, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if !reflect.DeepEqual(actual, test.expected) {
+					t.Errorf("\nexpected: %s\n  actual: %s", test.expected, actual)
+					return
+				}
+				rw.Header().Set("Content-Type", "application/json")
+				response, _ := json.Marshal(chatResponseFull{
+					Channel:   "CXXX",
+					Timestamp: "1234567890.123456",
+					SlackResponse: SlackResponse{
+						Ok: true,
+					},
+				})
+				rw.Write(response)
+			})
+
+			_, _, _ = api.StopStream("CXXX", "1234567890.123456", test.opt...)
+		})
+	}
 }

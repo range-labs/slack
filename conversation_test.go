@@ -1,10 +1,15 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -82,6 +87,98 @@ func TestCreateSimpleChannel(t *testing.T) {
 	assertSimpleChannel(t, channel)
 }
 
+// Shared Channel
+var sharedChannel = `{
+	"id": "C024BE91L",
+	"name": "fun",
+	"is_channel": true,
+	"created": 1360782804,
+	"creator": "U024BE7LH",
+	"is_archived": false,
+	"is_general": false,
+	"members": [
+			"U024BE7LH"
+	],
+	"is_shared": true,
+	"context_team_id": "T1ABCD2E12",
+	"is_ext_shared": true,
+	"shared_team_ids": [
+			"T07XY8FPJ5C"
+	],
+	"internal_team_ids": [],
+	"connected_team_ids": [
+			"T07XY8FPJ5C",
+			"T1ABCD2E12"
+	],
+	"connected_limited_team_ids": [],
+	"pending_connected_team_ids": [],
+	"conversation_host_id": "T07XY8FPJ5C",
+	"topic": {
+			"value": "Fun times",
+			"creator": "U024BE7LV",
+			"last_set": 1369677212
+	},
+	"purpose": {
+			"value": "This channel is for fun",
+			"creator": "U024BE7LH",
+			"last_set": 1360782804
+	},
+	"is_member": true,
+	"last_read": "1401383885.000061",
+	"unread_count": 0,
+	"unread_count_display": 0
+}`
+
+func unmarshalSharedChannel(j string) (*Channel, error) {
+	channel := &Channel{}
+	if err := json.Unmarshal([]byte(j), &channel); err != nil {
+		return nil, err
+	}
+	return channel, nil
+}
+
+func TestSharedChannel(t *testing.T) {
+	channel, err := unmarshalSharedChannel(sharedChannel)
+	assert.Nil(t, err)
+	assertSharedChannel(t, channel)
+}
+
+func assertSharedChannel(t *testing.T, channel *Channel) {
+	assertSimpleChannel(t, channel)
+	assert.Equal(t, true, channel.IsShared)
+	assert.Equal(t, true, channel.IsExtShared)
+	assert.Equal(t, "T1ABCD2E12", channel.ContextTeamID)
+	assert.Equal(t, "T07XY8FPJ5C", channel.ConversationHostID)
+	if !reflect.DeepEqual([]string{"T07XY8FPJ5C"}, channel.SharedTeamIDs) {
+		t.Fatal(ErrIncorrectResponse)
+	}
+	if !reflect.DeepEqual([]string{"T07XY8FPJ5C", "T1ABCD2E12"}, channel.ConnectedTeamIDs) {
+		t.Fatal(ErrIncorrectResponse)
+	}
+}
+
+func TestCreateSharedChannel(t *testing.T) {
+	channel := &Channel{}
+	channel.ID = "C024BE91L"
+	channel.Name = "fun"
+	channel.IsChannel = true
+	channel.Created = JSONTime(1360782804)
+	channel.Creator = "U024BE7LH"
+	channel.IsArchived = false
+	channel.IsGeneral = false
+	channel.IsMember = true
+	channel.LastRead = "1401383885.000061"
+	channel.UnreadCount = 0
+	channel.UnreadCountDisplay = 0
+	channel.IsShared = true
+	channel.IsExtShared = true
+	channel.ContextTeamID = "T1ABCD2E12"
+	channel.ConversationHostID = "T07XY8FPJ5C"
+	channel.SharedTeamIDs = []string{"T07XY8FPJ5C"}
+	channel.ConnectedTeamIDs = []string{"T07XY8FPJ5C", "T1ABCD2E12"}
+	assertSharedChannel(t, channel)
+}
+
 // Group
 var simpleGroup = `{
     "id": "G024BE91L",
@@ -147,6 +244,167 @@ func TestCreateSimpleGroup(t *testing.T) {
 	group.UnreadCount = 0
 	group.UnreadCountDisplay = 0
 	assertSimpleGroup(t, group)
+}
+
+// Channel with Canvas
+var channelWithCanvas = `{
+    "id": "C024BE91L",
+    "name": "fun",
+    "is_channel": true,
+    "created": 1360782804,
+    "creator": "U024BE7LH",
+    "is_archived": false,
+    "is_general": false,
+    "members": [
+        "U024BE7LH"
+    ],
+    "topic": {
+        "value": "Fun times",
+        "creator": "U024BE7LV",
+        "last_set": 1369677212
+    },
+    "purpose": {
+        "value": "This channel is for fun",
+        "creator": "U024BE7LH",
+        "last_set": 1360782804
+    },
+    "is_member": true,
+    "last_read": "1401383885.000061",
+    "unread_count": 0,
+    "unread_count_display": 0,
+	"properties": {
+        "canvas": {
+            "file_id": "F05RQ01LJU0",
+            "is_empty": true,
+            "quip_thread_id": "XFB9AAlvIyJ"
+        }
+    }
+}`
+
+func unmarshalChannelWithCanvas(j string) (*Channel, error) {
+	channel := &Channel{}
+	if err := json.Unmarshal([]byte(j), &channel); err != nil {
+		return nil, err
+	}
+	return channel, nil
+}
+
+func TestChannelWithCanvas(t *testing.T) {
+	channel, err := unmarshalChannelWithCanvas(channelWithCanvas)
+	assert.Nil(t, err)
+	assertChannelWithCanvas(t, channel)
+}
+
+func assertChannelWithCanvas(t *testing.T, channel *Channel) {
+	assertSimpleChannel(t, channel)
+	assert.Equal(t, "F05RQ01LJU0", channel.Properties.Canvas.FileId)
+	assert.Equal(t, true, channel.Properties.Canvas.IsEmpty)
+	assert.Equal(t, "XFB9AAlvIyJ", channel.Properties.Canvas.QuipThreadId)
+}
+
+func TestCreateChannelWithCanvas(t *testing.T) {
+	channel := &Channel{}
+	channel.ID = "C024BE91L"
+	channel.Name = "fun"
+	channel.IsChannel = true
+	channel.Created = JSONTime(1360782804)
+	channel.Creator = "U024BE7LH"
+	channel.IsArchived = false
+	channel.IsGeneral = false
+	channel.IsMember = true
+	channel.LastRead = "1401383885.000061"
+	channel.UnreadCount = 0
+	channel.UnreadCountDisplay = 0
+	channel.Properties = &Properties{
+		Canvas: Canvas{
+			FileId:       "F05RQ01LJU0",
+			IsEmpty:      true,
+			QuipThreadId: "XFB9AAlvIyJ",
+		},
+	}
+	assertChannelWithCanvas(t, channel)
+}
+
+// Channel with RecordChannel
+var channelWithRecordChannel = `{
+    "id": "C024BE91L",
+    "name": "fun",
+    "is_channel": true,
+    "created": 1360782804,
+    "creator": "U024BE7LH",
+    "is_archived": false,
+    "is_general": false,
+    "members": [
+        "U024BE7LH"
+    ],
+    "topic": {
+        "value": "Fun times",
+        "creator": "U024BE7LV",
+        "last_set": 1369677212
+    },
+    "purpose": {
+        "value": "This channel is for fun",
+        "creator": "U024BE7LH",
+        "last_set": 1360782804
+    },
+    "is_member": true,
+    "last_read": "1401383885.000061",
+    "unread_count": 0,
+    "unread_count_display": 0,
+	"properties": {
+        "record_channel": {
+            "record_id": "S:00D0000000000000EAU:0010000000000000AA2",
+            "record_type": "Account",
+            "record_label": "Account",
+            "record_label_plural": "Accounts"
+        }
+    }
+}`
+
+func unmarshalChannelWithRecordChannel(j string) (*Channel, error) {
+	channel := &Channel{}
+	if err := json.Unmarshal([]byte(j), &channel); err != nil {
+		return nil, err
+	}
+	return channel, nil
+}
+
+func TestChannelWithRecordChannel(t *testing.T) {
+	channel, err := unmarshalChannelWithRecordChannel(channelWithRecordChannel)
+	assert.Nil(t, err)
+	assertChannelWithRecordChannel(t, channel)
+}
+
+func assertChannelWithRecordChannel(t *testing.T, channel *Channel) {
+	assertSimpleChannel(t, channel)
+	assert.Equal(t, "S:00D0000000000000EAU:0010000000000000AA2", channel.Properties.RecordChannel.RecordID)
+	assert.Equal(t, "Account", channel.Properties.RecordChannel.RecordType)
+	assert.Equal(t, "Account", channel.Properties.RecordChannel.RecordLabel)
+	assert.Equal(t, "Accounts", channel.Properties.RecordChannel.RecordLabelPlural)
+}
+
+func TestCreateChannelWithRecordChannel(t *testing.T) {
+	channel := &Channel{}
+	channel.ID = "C024BE91L"
+	channel.Name = "fun"
+	channel.IsChannel = true
+	channel.Created = JSONTime(1360782804)
+	channel.Creator = "U024BE7LH"
+	channel.IsArchived = false
+	channel.IsGeneral = false
+	channel.IsMember = true
+	channel.LastRead = "1401383885.000061"
+	channel.UnreadCount = 0
+	channel.UnreadCountDisplay = 0
+	channel.Properties = &Properties{
+		RecordChannel: RecordChannel{
+			RecordID:          "S:00D0000000000000EAU:0010000000000000AA2",
+			RecordType:        "Account",
+			RecordLabel:       "Account",
+			RecordLabelPlural: "Accounts",
+		},
+	}
+	assertChannelWithRecordChannel(t, channel)
 }
 
 // IM
@@ -287,6 +545,20 @@ func okChannelJsonHandler(rw http.ResponseWriter, r *http.Request) {
 	rw.Write(response)
 }
 
+func okInviteSharedJsonHandler(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "application/json")
+	response, _ := json.Marshal(struct {
+		SlackResponse
+		InviteID              string `json:"invite_id"`
+		IsLegacySharedChannel bool   `json:"is_legacy_shared_channel"`
+	}{
+		SlackResponse:         SlackResponse{Ok: true},
+		InviteID:              "I01234567",
+		IsLegacySharedChannel: false,
+	})
+	rw.Write(response)
+}
+
 func TestSetTopicOfConversation(t *testing.T) {
 	http.HandleFunc("/conversations.setTopic", okChannelJsonHandler)
 	once.Do(startServer)
@@ -348,6 +620,65 @@ func TestInviteUsersToConversation(t *testing.T) {
 	}
 }
 
+func TestInviteSharedToConversation(t *testing.T) {
+	http.HandleFunc("/conversations.inviteShared", okInviteSharedJsonHandler)
+	once.Do(startServer)
+	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+
+	t.Run("user_ids", func(t *testing.T) {
+		userIDs := []string{"UXXXXXXX1", "UXXXXXXX2"}
+		inviteID, isLegacySharedChannel, err := api.InviteSharedUserIDsToConversation("CXXXXXXXX", userIDs...)
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+			return
+		}
+		if inviteID == "" {
+			t.Error("invite id should have a value")
+			return
+		}
+		if isLegacySharedChannel {
+			t.Error("is legacy shared channel should be false")
+		}
+	})
+
+	t.Run("emails", func(t *testing.T) {
+		emails := []string{"nopcoder@slack.com", "nopcoder@example.com"}
+		inviteID, isLegacySharedChannel, err := api.InviteSharedEmailsToConversation("CXXXXXXXX", emails...)
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+			return
+		}
+		if inviteID == "" {
+			t.Error("invite id should have a value")
+			return
+		}
+		if isLegacySharedChannel {
+			t.Error("is legacy shared channel should be false")
+		}
+	})
+
+	t.Run("external_limited", func(t *testing.T) {
+		userIDs := []string{"UXXXXXXX1", "UXXXXXXX2"}
+		externalLimited := true
+		inviteID, isLegacySharedChannel, err := api.InviteSharedToConversation(InviteSharedToConversationParams{
+			ChannelID:       "CXXXXXXXX",
+			UserIDs:         userIDs,
+			ExternalLimited: &externalLimited,
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+			return
+		}
+		if inviteID == "" {
+			t.Error("invite id should have a value")
+			return
+		}
+		if isLegacySharedChannel {
+			t.Error("is legacy shared channel should be false")
+		}
+	})
+}
+
 func TestKickUserFromConversation(t *testing.T) {
 	http.HandleFunc("/conversations.kick", okJSONHandler)
 	once.Do(startServer)
@@ -385,7 +716,7 @@ func TestCreateConversation(t *testing.T) {
 	http.HandleFunc("/conversations.create", okChannelJsonHandler)
 	once.Do(startServer)
 	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
-	channel, err := api.CreateConversation("CXXXXXXXX", false)
+	channel, err := api.CreateConversation(CreateConversationParams{ChannelName: "CXXXXXXXX"})
 	if err != nil {
 		t.Errorf("Unexpected error: %s", err)
 		return
@@ -400,13 +731,31 @@ func TestGetConversationInfo(t *testing.T) {
 	http.HandleFunc("/conversations.info", okChannelJsonHandler)
 	once.Do(startServer)
 	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
-	channel, err := api.GetConversationInfo("CXXXXXXXX", false)
+	channel, err := api.GetConversationInfo(&GetConversationInfoInput{
+		ChannelID: "CXXXXXXXX",
+	})
 	if err != nil {
 		t.Errorf("Unexpected error: %s", err)
 		return
 	}
 	if channel == nil {
 		t.Error("channel should not be nil")
+		return
+	}
+
+	// Nil Input Error
+	api = New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+	_, err = api.GetConversationInfo(nil)
+	if err == nil {
+		t.Errorf("Unexpected pass where there should have been nil input error")
+		return
+	}
+
+	// No Channel Error
+	api = New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+	_, err = api.GetConversationInfo(&GetConversationInfoInput{})
+	if err == nil {
+		t.Errorf("Unexpected pass where there should have been missing channel error")
 		return
 	}
 }
@@ -472,7 +821,29 @@ func getConversationsHandler(rw http.ResponseWriter, r *http.Request) {
 		Channels []Channel `json:"channels"`
 	}{
 		SlackResponse: SlackResponse{Ok: true},
-		Channels:      []Channel{}})
+		Channels: []Channel{
+			{
+				GroupConversation: GroupConversation{
+					Conversation: Conversation{
+						ID: "CXXXXXXXX",
+					},
+				},
+			},
+			{
+				GroupConversation: GroupConversation{
+					Conversation: Conversation{
+						ID: "CYYYYYYYY",
+					},
+				},
+			},
+			{
+				GroupConversation: GroupConversation{
+					Conversation: Conversation{
+						ID: "CZZZZZZZZ",
+					},
+				},
+			},
+		}})
 	rw.Write(response)
 }
 
@@ -484,6 +855,16 @@ func TestGetConversations(t *testing.T) {
 	_, _, err := api.GetConversations(&params)
 	if err != nil {
 		t.Errorf("Unexpected error: %s", err)
+		return
+	}
+
+	conversations, err := api.GetAllConversationsContext(context.Background())
+	if err != nil {
+		t.Errorf("Unexpected error: %s", err)
+		return
+	}
+	if len(conversations) != 3 {
+		t.Errorf("Expected 3 conversations, got %d", len(conversations))
 		return
 	}
 }
@@ -571,5 +952,162 @@ func TestMarkConversation(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %s", err)
 		return
+	}
+}
+
+func createChannelCanvasHandler(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "application/json")
+	response, _ := json.Marshal(struct {
+		SlackResponse
+		CanvasID string `json:"canvas_id"`
+	}{
+		SlackResponse: SlackResponse{Ok: true},
+		CanvasID:      "F05RQ01LJU0",
+	})
+	rw.Write(response)
+}
+
+func TestCreateChannelCanvas(t *testing.T) {
+	http.HandleFunc("/conversations.canvases.create", createChannelCanvasHandler)
+	once.Do(startServer)
+	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+
+	documentContent := DocumentContent{
+		Type:     "markdown",
+		Markdown: "> channel canvas!",
+	}
+
+	canvasID, err := api.CreateChannelCanvas("C1234567890", documentContent)
+	if err != nil {
+		t.Errorf("Failed to create channel canvas: %v", err)
+		return
+	}
+
+	assert.Equal(t, "F05RQ01LJU0", canvasID)
+}
+
+func getTestChannelWithId(id string) Channel {
+	return Channel{
+		GroupConversation: GroupConversation{
+			Conversation: Conversation{
+				ID: id,
+			},
+			Name: "Test Channel",
+			Topic: Topic{
+				Value: "Test topic",
+			},
+			Purpose: Purpose{
+				Value: "Test purpose",
+			},
+		},
+		IsChannel: true,
+		IsGeneral: false,
+		IsMember:  true,
+	}
+}
+
+// returns n pages of conversations and sends rate limited errors in between successful pages.
+func getConversationPagesWithRateLimitErrors(max int64) func(rw http.ResponseWriter, r *http.Request) {
+	var n int64
+	doRateLimit := false
+	return func(rw http.ResponseWriter, r *http.Request) {
+		defer func() {
+			doRateLimit = !doRateLimit
+		}()
+		if doRateLimit {
+			rw.Header().Set("Retry-After", "1")
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		var cpage int64
+		sresp := SlackResponse{
+			Ok: true,
+		}
+		channels := []Channel{
+			getTestChannelWithId(fmt.Sprintf("C%03d", n)),
+		}
+		rw.Header().Set("Content-Type", "application/json")
+		if cpage = atomic.AddInt64(&n, 1); cpage == max {
+			response, _ := json.Marshal(struct {
+				SlackResponse
+				Channels []Channel `json:"channels"`
+			}{
+				SlackResponse: sresp,
+				Channels:      channels,
+			})
+			rw.Write(response)
+			return
+		}
+		response, _ := json.Marshal(struct {
+			SlackResponse
+			Channels         []Channel        `json:"channels"`
+			ResponseMetaData responseMetaData `json:"response_metadata"`
+		}{
+			SlackResponse: sresp,
+			Channels:      channels,
+			ResponseMetaData: responseMetaData{
+				NextCursor: strconv.Itoa(int(cpage)),
+			},
+		})
+		rw.Write(response)
+	}
+}
+
+func TestGetAllConversationsHandlesRateLimit(t *testing.T) {
+	http.DefaultServeMux = new(http.ServeMux)
+	http.HandleFunc("/conversations.list", getConversationPagesWithRateLimitErrors(3))
+
+	once.Do(startServer)
+	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+
+	start := time.Now()
+	conversations, err := api.GetAllConversations()
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("Unexpected error: %s", err)
+		return
+	}
+
+	// Should have 3 conversations (one per page)
+	if len(conversations) != 3 {
+		t.Errorf("Expected 3 conversations, got %d", len(conversations))
+		return
+	}
+
+	// Should have taken at least 2 seconds due to rate limiting (2 rate limit delays)
+	if elapsed < 2*time.Second {
+		t.Errorf("Expected at least 2 seconds due to rate limiting, took %v", elapsed)
+		return
+	}
+
+	// Verify conversation IDs
+	expectedIDs := []string{"C000", "C001", "C002"}
+	for i, conv := range conversations {
+		if conv.ID != expectedIDs[i] {
+			t.Errorf("Expected conversation ID %s, got %s", expectedIDs[i], conv.ID)
+		}
+	}
+}
+
+func TestGetAllConversationsReturnsServerError(t *testing.T) {
+	http.DefaultServeMux = new(http.ServeMux)
+	http.HandleFunc("/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	once.Do(startServer)
+	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
+
+	_, err := api.GetAllConversations()
+
+	if err == nil {
+		t.Errorf("Expected error but got nil")
+		return
+	}
+
+	expectedErr := "slack server error: 500 Internal Server Error"
+	if err.Error() != expectedErr {
+		t.Errorf("Expected: %s. Got: %s", expectedErr, err.Error())
 	}
 }

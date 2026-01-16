@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -46,17 +46,17 @@ type GroupConversationResponse struct {
 }
 
 func (sts *Server) conversationsInfoHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("error reading body: %s", err.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	values, vErr := url.ParseQuery(string(data))
 	if vErr != nil {
 		msg := fmt.Sprintf("Unable to decode query params: %s", vErr.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
@@ -75,7 +75,7 @@ func (sts *Server) conversationsInfoHandler(w http.ResponseWriter, r *http.Reque
 	encoded, err := json.Marshal(&response)
 	if err != nil {
 		msg := fmt.Sprintf("Unable to encode response: %s", err.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
@@ -108,20 +108,40 @@ func inviteConversationHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(inviteConversationJSON))
 }
 
+// handle conversations.inviteShared
+func inviteSharedConversationHandler(w http.ResponseWriter, r *http.Request) {
+	_, _ = w.Write([]byte(inviteSharedResponseJSON))
+}
+
+// handle groups.list
+func listGroupsHandler(w http.ResponseWriter, _ *http.Request) {
+	_, _ = w.Write([]byte(defaultGroupsListJSON))
+}
+
+// handle reaction.Add
+func reactionAddHandler(w http.ResponseWriter, _ *http.Request) {
+	_, _ = w.Write([]byte(defaultOkJSON))
+}
+
+// handle apps.connections.open
+func appsConnectionsOpenHandler(w http.ResponseWriter, r *http.Request) {
+	_, _ = w.Write([]byte(defaultAppsConnectionsJSON(r.Context())))
+}
+
 // handle chat.postMessage
 func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 	serverAddr := r.Context().Value(ServerBotHubNameContextKey).(string)
-	data, err := ioutil.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("error reading body: %s", err.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	values, vErr := url.ParseQuery(string(data))
 	if vErr != nil {
 		msg := fmt.Sprintf("Unable to decode query params: %s", vErr.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
@@ -157,7 +177,7 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 		decoded, err := url.QueryUnescape(attachments)
 		if err != nil {
 			msg := fmt.Sprintf("Unable to decode attachments: %s", err.Error())
-			log.Printf(msg)
+			log.Printf("%s", msg)
 			http.Error(w, msg, http.StatusInternalServerError)
 			return
 		}
@@ -165,7 +185,7 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 		aJErr := json.Unmarshal([]byte(decoded), &attaches)
 		if aJErr != nil {
 			msg := fmt.Sprintf("Unable to decode attachments string to json: %s", aJErr.Error())
-			log.Printf(msg)
+			log.Printf("%s", msg)
 			http.Error(w, msg, http.StatusInternalServerError)
 			return
 		}
@@ -176,7 +196,7 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 		decoded, err := url.QueryUnescape(blocks)
 		if err != nil {
 			msg := fmt.Sprintf("Unable to decode blocks: %s", err.Error())
-			log.Printf(msg)
+			log.Printf("%s", msg)
 			http.Error(w, msg, http.StatusInternalServerError)
 			return
 		}
@@ -184,7 +204,7 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 		dbJErr := json.Unmarshal([]byte(decoded), &decodedBlocks)
 		if dbJErr != nil {
 			msg := fmt.Sprintf("Unable to decode blocks string to json: %s", dbJErr.Error())
-			log.Printf(msg)
+			log.Printf("%s", msg)
 			http.Error(w, msg, http.StatusInternalServerError)
 			return
 		}
@@ -193,7 +213,7 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 	jsonMessage, jsonErr := json.Marshal(m)
 	if jsonErr != nil {
 		msg := fmt.Sprintf("Unable to marshal message: %s", jsonErr.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
@@ -203,17 +223,17 @@ func (sts *Server) postMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 // RTMConnectHandler generates a valid connection
 func RTMConnectHandler(w http.ResponseWriter, r *http.Request) {
-	_, err := ioutil.ReadAll(r.Body)
+	_, err := io.ReadAll(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("Error reading body: %s", err.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	wsurl := r.Context().Value(ServerWSContextKey).(string)
 	if wsurl == "" {
 		msg := "missing webservice url from context"
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
@@ -233,17 +253,17 @@ func RTMConnectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func rtmStartHandler(w http.ResponseWriter, r *http.Request) {
-	_, err := ioutil.ReadAll(r.Body)
+	_, err := io.ReadAll(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("Error reading body: %s", err.Error())
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	wsurl := r.Context().Value(ServerWSContextKey).(string)
 	if wsurl == "" {
 		msg := "missing webservice url from context"
-		log.Printf(msg)
+		log.Printf("%s", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}

@@ -18,24 +18,25 @@ type ViewState struct {
 
 type View struct {
 	SlackResponse
-	ID              string           `json:"id"`
-	TeamID          string           `json:"team_id"`
-	Type            ViewType         `json:"type"`
-	Title           *TextBlockObject `json:"title"`
-	Close           *TextBlockObject `json:"close"`
-	Submit          *TextBlockObject `json:"submit"`
-	Blocks          Blocks           `json:"blocks"`
-	PrivateMetadata string           `json:"private_metadata"`
-	CallbackID      string           `json:"callback_id"`
-	State           *ViewState       `json:"state"`
-	Hash            string           `json:"hash"`
-	ClearOnClose    bool             `json:"clear_on_close"`
-	NotifyOnClose   bool             `json:"notify_on_close"`
-	RootViewID      string           `json:"root_view_id"`
-	PreviousViewID  string           `json:"previous_view_id"`
-	AppID           string           `json:"app_id"`
-	ExternalID      string           `json:"external_id"`
-	BotID           string           `json:"bot_id"`
+	ID                 string           `json:"id"`
+	TeamID             string           `json:"team_id"`
+	Type               ViewType         `json:"type"`
+	Title              *TextBlockObject `json:"title"`
+	Close              *TextBlockObject `json:"close"`
+	Submit             *TextBlockObject `json:"submit"`
+	Blocks             Blocks           `json:"blocks"`
+	PrivateMetadata    string           `json:"private_metadata"`
+	CallbackID         string           `json:"callback_id"`
+	State              *ViewState       `json:"state"`
+	Hash               string           `json:"hash"`
+	ClearOnClose       bool             `json:"clear_on_close"`
+	NotifyOnClose      bool             `json:"notify_on_close"`
+	RootViewID         string           `json:"root_view_id"`
+	PreviousViewID     string           `json:"previous_view_id"`
+	AppID              string           `json:"app_id"`
+	ExternalID         string           `json:"external_id"`
+	BotID              string           `json:"bot_id"`
+	AppInstalledTeamID string           `json:"app_installed_team_id"`
 }
 
 type ViewSubmissionCallbackResponseURL struct {
@@ -109,6 +110,12 @@ type ModalViewRequest struct {
 	ExternalID      string           `json:"external_id,omitempty"`
 }
 
+type PublishViewContextRequest struct {
+	UserID string             `json:"user_id"`
+	View   HomeTabViewRequest `json:"view"`
+	Hash   *string            `json:"hash,omitempty"`
+}
+
 func (v *ModalViewRequest) ViewType() ViewType {
 	return v.Type
 }
@@ -130,12 +137,6 @@ type openViewRequest struct {
 	View      ModalViewRequest `json:"view"`
 }
 
-type publishViewRequest struct {
-	UserID string             `json:"user_id"`
-	View   HomeTabViewRequest `json:"view"`
-	Hash   string             `json:"hash,omitempty"`
-}
-
 type pushViewRequest struct {
 	TriggerID string           `json:"trigger_id"`
 	View      ModalViewRequest `json:"view"`
@@ -154,6 +155,7 @@ type ViewResponse struct {
 }
 
 // OpenView opens a view for a user.
+// For more information see the OpenViewContext documentation.
 func (api *Client) OpenView(triggerID string, view ModalViewRequest) (*ViewResponse, error) {
 	return api.OpenViewContext(context.Background(), triggerID, view)
 }
@@ -176,6 +178,7 @@ func ValidateUniqueBlockID(view ModalViewRequest) bool {
 }
 
 // OpenViewContext opens a view for a user with a custom context.
+// Slack API docs: https://api.slack.com/methods/views.open
 func (api *Client) OpenViewContext(
 	ctx context.Context,
 	triggerID string,
@@ -207,24 +210,19 @@ func (api *Client) OpenViewContext(
 }
 
 // PublishView publishes a static view for a user.
+// For more information see the PublishViewContext documentation.
 func (api *Client) PublishView(userID string, view HomeTabViewRequest, hash string) (*ViewResponse, error) {
-	return api.PublishViewContext(context.Background(), userID, view, hash)
+	return api.PublishViewContext(context.Background(), PublishViewContextRequest{UserID: userID, View: view, Hash: &hash})
 }
 
 // PublishViewContext publishes a static view for a user with a custom context.
+// Slack API docs: https://api.slack.com/methods/views.publish
 func (api *Client) PublishViewContext(
 	ctx context.Context,
-	userID string,
-	view HomeTabViewRequest,
-	hash string,
+	req PublishViewContextRequest,
 ) (*ViewResponse, error) {
-	if userID == "" {
+	if req.UserID == "" {
 		return nil, ErrParametersMissing
-	}
-	req := publishViewRequest{
-		UserID: userID,
-		View:   view,
-		Hash:   hash,
 	}
 	encoded, err := json.Marshal(req)
 	if err != nil {
@@ -240,11 +238,13 @@ func (api *Client) PublishViewContext(
 }
 
 // PushView pushes a view onto the stack of a root view.
+// For more information see the PushViewContext documentation.
 func (api *Client) PushView(triggerID string, view ModalViewRequest) (*ViewResponse, error) {
 	return api.PushViewContext(context.Background(), triggerID, view)
 }
 
-// PublishViewContext pushes a view onto the stack of a root view with a custom context.
+// PushViewContext pushes a view onto the stack of a root view with a custom context.
+// Slack API docs: https://api.slack.com/methods/views.push
 func (api *Client) PushViewContext(
 	ctx context.Context,
 	triggerID string,
@@ -271,11 +271,13 @@ func (api *Client) PushViewContext(
 }
 
 // UpdateView updates an existing view.
+// For more information see the UpdateViewContext documentation.
 func (api *Client) UpdateView(view ModalViewRequest, externalID, hash, viewID string) (*ViewResponse, error) {
 	return api.UpdateViewContext(context.Background(), view, externalID, hash, viewID)
 }
 
 // UpdateViewContext updates an existing view with a custom context.
+// Slack API docs: https://api.slack.com/methods/views.update
 func (api *Client) UpdateViewContext(
 	ctx context.Context,
 	view ModalViewRequest,

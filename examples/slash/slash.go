@@ -2,32 +2,30 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 
 	"github.com/slack-go/slack"
 )
 
 func main() {
-	var (
-		signingSecret string
-	)
-
-	flag.StringVar(&signingSecret, "secret", "YOUR_SIGNING_SECRET_HERE", "Your Slack app's signing secret")
-	flag.Parse()
+	// Get signing secret from environment variable
+	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
+	if signingSecret == "" {
+		fmt.Println("SLACK_SIGNING_SECRET environment variable is required")
+		os.Exit(1)
+	}
 
 	http.HandleFunc("/slash", func(w http.ResponseWriter, r *http.Request) {
-
 		verifier, err := slack.NewSecretsVerifier(r.Header, signingSecret)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		r.Body = ioutil.NopCloser(io.TeeReader(r.Body, &verifier))
+		r.Body = io.NopCloser(io.TeeReader(r.Body, &verifier))
 		s, err := slack.SlashCommandParse(r)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)

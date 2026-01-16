@@ -26,10 +26,10 @@ type Customize interface {
 	Handle(pattern string, handler http.HandlerFunc)
 }
 
-type binder func(Customize)
+type Binder func(Customize)
 
 // NewTestServer returns a slacktest.Server ready to be started
-func NewTestServer(custom ...binder) *Server {
+func NewTestServer(custom ...Binder) *Server {
 	serverChans := newMessageChannels()
 
 	channels := &serverChannels{}
@@ -55,10 +55,13 @@ func NewTestServer(custom ...binder) *Server {
 	s.Handle("/conversations.setPurpose", setConversationPurposeHandler)
 	s.Handle("/conversations.rename", renameConversationHandler)
 	s.Handle("/conversations.invite", inviteConversationHandler)
+	s.Handle("/conversations.inviteShared", inviteSharedConversationHandler)
 	s.Handle("/users.info", usersInfoHandler)
 	s.Handle("/users.lookupByEmail", usersInfoHandler)
 	s.Handle("/bots.info", botsInfoHandler)
 	s.Handle("/auth.test", authTestHandler)
+	s.Handle("/reactions.add", reactionAddHandler)
+	s.Handle("/apps.connections.open", appsConnectionsOpenHandler)
 
 	httpserver := httptest.NewUnstartedServer(s.mux)
 	addr := httpserver.Listener.Addr().String()
@@ -104,28 +107,20 @@ func (sts *Server) GetGroups() []slack.Group {
 
 // GetSeenInboundMessages returns all messages seen via websocket excluding pings
 func (sts *Server) GetSeenInboundMessages() []string {
-	sts.seenInboundMessages.RLock()
-	m := sts.seenInboundMessages.messages
-	sts.seenInboundMessages.RUnlock()
-	return m
+	return sts.seenInboundMessages.get()
 }
 
 // GetSeenOutboundMessages returns all messages seen via websocket excluding pings
 func (sts *Server) GetSeenOutboundMessages() []string {
-	sts.seenOutboundMessages.RLock()
-	m := sts.seenOutboundMessages.messages
-	sts.seenOutboundMessages.RUnlock()
-	return m
+	return sts.seenOutboundMessages.get()
 }
 
 // SawOutgoingMessage checks if a message was sent to connected websocket clients
 func (sts *Server) SawOutgoingMessage(msg string) bool {
-	sts.seenOutboundMessages.RLock()
-	defer sts.seenOutboundMessages.RUnlock()
-	for _, m := range sts.seenOutboundMessages.messages {
+	for _, m := range sts.seenOutboundMessages.get() {
 		evt := &slack.MessageEvent{}
-		jErr := json.Unmarshal([]byte(m), evt)
-		if jErr != nil {
+		err := json.Unmarshal([]byte(m), evt)
+		if err != nil {
 			continue
 		}
 
@@ -133,17 +128,16 @@ func (sts *Server) SawOutgoingMessage(msg string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 // SawMessage checks if an incoming message was seen
 func (sts *Server) SawMessage(msg string) bool {
-	sts.seenInboundMessages.RLock()
-	defer sts.seenInboundMessages.RUnlock()
-	for _, m := range sts.seenInboundMessages.messages {
+	for _, m := range sts.seenInboundMessages.get() {
 		evt := &slack.MessageEvent{}
-		jErr := json.Unmarshal([]byte(m), evt)
-		if jErr != nil {
+		err := json.Unmarshal([]byte(m), evt)
+		if err != nil {
 			// This event isn't a message event so we'll skip it
 			continue
 		}
@@ -151,6 +145,7 @@ func (sts *Server) SawMessage(msg string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -182,11 +177,14 @@ func (sts *Server) SendMessageToBot(channel, msg string) {
 	m.User = defaultNonBotUserID
 	m.Text = fmt.Sprintf("<@%s> %s", sts.BotID, msg)
 	m.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
-	j, jErr := json.Marshal(m)
-	if jErr != nil {
-		log.Printf("Unable to marshal message for bot: %s", jErr.Error())
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		log.Printf("Unable to marshal message for bot: %s", err.Error())
 		return
 	}
+
+	sts.seenOutboundMessages.observe(string(j))
 	go sts.queueForWebsocket(string(j), sts.ServerAddr)
 }
 
@@ -198,11 +196,14 @@ func (sts *Server) SendDirectMessageToBot(msg string) {
 	m.User = defaultNonBotUserID
 	m.Text = msg
 	m.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
-	j, jErr := json.Marshal(m)
-	if jErr != nil {
-		log.Printf("Unable to marshal private message for bot: %s", jErr.Error())
+
+	j, err := json.Marshal(m)
+	if err != nil {
+		log.Printf("Unable to marshal private message for bot: %s", err.Error())
 		return
 	}
+
+	sts.seenOutboundMessages.observe(string(j))
 	go sts.queueForWebsocket(string(j), sts.ServerAddr)
 }
 
@@ -214,18 +215,21 @@ func (sts *Server) SendMessageToChannel(channel, msg string) {
 	m.Text = msg
 	m.User = defaultNonBotUserID
 	m.Timestamp = fmt.Sprintf("%d", time.Now().Unix())
+
 	j, jErr := json.Marshal(m)
 	if jErr != nil {
 		log.Printf("Unable to marshal message for channel: %s", jErr.Error())
 		return
 	}
-	stringMsg := string(j)
-	go sts.queueForWebsocket(stringMsg, sts.ServerAddr)
+
+	sts.seenOutboundMessages.observe(string(j))
+	go sts.queueForWebsocket(string(j), sts.ServerAddr)
 }
 
 // SendToWebsocket send `s` as is to connected clients.
 // This is useful for sending your own custom json to the websocket
 func (sts *Server) SendToWebsocket(s string) {
+	sts.seenOutboundMessages.observe(s)
 	go sts.queueForWebsocket(s, sts.ServerAddr)
 }
 

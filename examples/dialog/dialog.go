@@ -2,22 +2,37 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/slack-go/slack"
 )
 
-var api = slack.New("YOUR_TOKEN")
-var signingSecret = "YOUR_SIGNING_SECRET"
+var api *slack.Client
+var signingSecret string
 
 // You can open a dialog with a user interaction. (like pushing buttons, slash commands ...)
 // https://api.slack.com/surfaces/modals
 // https://api.slack.com/interactivity/entry-points
 func main() {
+	// Get token from environment variable
+	token := os.Getenv("SLACK_BOT_TOKEN")
+	if token == "" {
+		log.Fatal("SLACK_BOT_TOKEN environment variable is required")
+	}
+
+	// Get signing secret from environment variable
+	signingSecret = os.Getenv("SLACK_SIGNING_SECRET")
+	if signingSecret == "" {
+		log.Fatal("SLACK_SIGNING_SECRET environment variable is required")
+	}
+
+	api = slack.New(token)
+
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":3000", nil)
 }
@@ -26,7 +41,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	// Read request body
 	defer r.Body.Close()
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Printf("[ERROR] Fail to read request body: %v", err)

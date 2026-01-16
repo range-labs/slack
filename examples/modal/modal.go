@@ -5,7 +5,7 @@
 // 3. This will send a request to http://URL/modal and send a greeting message to the user
 
 // Note: Within your slack app you will need to enable and provide a URL for "Interactivity & Shortcuts" and "Slash Commands"
-// Note: Be sure to update YOUR_SIGNING_SECRET_HERE and YOUR_TOKEN_HERE
+// Note: Set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET environment variables
 // You can use ngrok to test this example: https://api.slack.com/tutorials/tunneling-with-ngrok
 // Helpful slack documentation to learn more: https://api.slack.com/interactivity/handling
 
@@ -15,8 +15,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
+
+	"time"
 
 	"github.com/slack-go/slack"
 )
@@ -31,15 +34,17 @@ func generateModalRequest() slack.ModalViewRequest {
 	headerSection := slack.NewSectionBlock(headerText, nil, nil)
 
 	firstNameText := slack.NewTextBlockObject("plain_text", "First Name", false, false)
+	firstNameHint := slack.NewTextBlockObject("plain_text", "First Name Hint", false, false)
 	firstNamePlaceholder := slack.NewTextBlockObject("plain_text", "Enter your first name", false, false)
 	firstNameElement := slack.NewPlainTextInputBlockElement(firstNamePlaceholder, "firstName")
 	// Notice that blockID is a unique identifier for a block
-	firstName := slack.NewInputBlock("First Name", firstNameText, firstNameElement)
+	firstName := slack.NewInputBlock("First Name", firstNameText, firstNameHint, firstNameElement)
 
 	lastNameText := slack.NewTextBlockObject("plain_text", "Last Name", false, false)
+	lastNameHint := slack.NewTextBlockObject("plain_text", "Last Name Hint", false, false)
 	lastNamePlaceholder := slack.NewTextBlockObject("plain_text", "Enter your first name", false, false)
 	lastNameElement := slack.NewPlainTextInputBlockElement(lastNamePlaceholder, "lastName")
-	lastName := slack.NewInputBlock("Last Name", lastNameText, lastNameElement)
+	lastName := slack.NewInputBlock("Last Name", lastNameText, lastNameHint, lastNameElement)
 
 	blocks := slack.Blocks{
 		BlockSet: []slack.Block{
@@ -58,23 +63,51 @@ func generateModalRequest() slack.ModalViewRequest {
 	return modalRequest
 }
 
-// This was taken from the slash example
-// https://github.com/slack-go/slack/blob/master/examples/slash/slash.go
+func updateModal() slack.ModalViewRequest {
+	// Create a ModalViewRequest with a header and two inputs
+	titleText := slack.NewTextBlockObject("plain_text", "My App", false, false)
+	closeText := slack.NewTextBlockObject("plain_text", "Close", false, false)
+	submitText := slack.NewTextBlockObject("plain_text", "Submit", false, false)
+
+	headerText := slack.NewTextBlockObject("mrkdwn", "Modal updated!", false, false)
+	headerSection := slack.NewSectionBlock(headerText, nil, nil)
+
+	blocks := slack.Blocks{
+		BlockSet: []slack.Block{
+			headerSection,
+		},
+	}
+
+	var modalRequest slack.ModalViewRequest
+	modalRequest.Type = slack.ViewType("modal")
+	modalRequest.Title = titleText
+	modalRequest.Close = closeText
+	modalRequest.Submit = submitText
+	modalRequest.Blocks = blocks
+	return modalRequest
+}
+
 func verifySigningSecret(r *http.Request) error {
-	signingSecret := "YOUR_SIGNING_SECRET_HERE"
+	// Get signing secret from environment variable
+	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
+	if signingSecret == "" {
+		fmt.Println("SLACK_SIGNING_SECRET environment variable is required")
+		os.Exit(1)
+	}
+
 	verifier, err := slack.NewSecretsVerifier(r.Header, signingSecret)
 	if err != nil {
 		fmt.Println(err.Error())
 		return err
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		fmt.Println(err.Error())
 		return err
 	}
 	// Need to use r.Body again when unmarshalling SlashCommand and InteractionCallback
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	verifier.Write(body)
 	if err = verifier.Ensure(); err != nil {
@@ -85,72 +118,87 @@ func verifySigningSecret(r *http.Request) error {
 	return nil
 }
 
-func handleSlash(w http.ResponseWriter, r *http.Request) {
-
-	err := verifySigningSecret(r)
-	if err != nil {
-		fmt.Printf(err.Error())
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	s, err := slack.SlashCommandParse(r)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Println(err.Error())
-		return
-	}
-
-	switch s.Command {
-	case "/humboldttest":
-		api := slack.New("YOUR_TOKEN_HERE")
-		modalRequest := generateModalRequest()
-		_, err = api.OpenView(s.TriggerID, modalRequest)
+func handleSlash(token string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := verifySigningSecret(r)
 		if err != nil {
-			fmt.Printf("Error opening view: %s", err)
+			fmt.Printf("%s", err.Error())
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		}
-	default:
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+
+		s, err := slack.SlashCommandParse(r)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Println(err.Error())
+			return
+		}
+
+		switch s.Command {
+		case "/slash":
+			api := slack.New(token)
+			modalRequest := generateModalRequest()
+			_, err = api.OpenView(s.TriggerID, modalRequest)
+			if err != nil {
+				fmt.Printf("Error opening view: %s", err)
+			}
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
-func handleModal(w http.ResponseWriter, r *http.Request) {
+func handleModal(token string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := verifySigningSecret(r)
+		if err != nil {
+			fmt.Printf("%s", err.Error())
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 
-	err := verifySigningSecret(r)
-	if err != nil {
-		fmt.Printf(err.Error())
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
+		var i slack.InteractionCallback
+		err = json.Unmarshal([]byte(r.FormValue("payload")), &i)
+		if err != nil {
+			fmt.Printf("%s", err.Error())
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 
-	var i slack.InteractionCallback
-	err = json.Unmarshal([]byte(r.FormValue("payload")), &i)
-	if err != nil {
-		fmt.Printf(err.Error())
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
+		api := slack.New(token)
 
-	// Note there might be a better way to get this info, but I figured this structure out from looking at the json response
-	firstName := i.View.State.Values["First Name"]["firstName"].Value
-	lastName := i.View.State.Values["Last Name"]["lastName"].Value
-
-	msg := fmt.Sprintf("Hello %s %s, nice to meet you!", firstName, lastName)
-
-	api := slack.New("YOUR_TOKEN_HERE")
-	_, _, err = api.PostMessage(i.User.ID,
-		slack.MsgOptionText(msg, false),
-		slack.MsgOptionAttachments())
-	if err != nil {
-		fmt.Printf(err.Error())
-		w.WriteHeader(http.StatusUnauthorized)
-		return
+		// update modal sample
+		switch i.Type {
+		// update when interaction type is view_submission
+		case slack.InteractionTypeViewSubmission:
+			// you can use any modal you want to show to users just like creating modal.
+			updateModal := updateModal()
+			// You must set one of external_id or view_id and you can use hash for avoiding race condition.
+			// More details: https://api.slack.com/surfaces/modals/using#updating_apis
+			_, err := api.UpdateView(updateModal, "", i.View.Hash, i.View.ID)
+			// Wait for a few seconds to see result this code is necesarry due to slack server modal is going to be closed after the update
+			time.Sleep(time.Second * 2)
+			if err != nil {
+				fmt.Printf("Error updating view: %s", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		default:
+			fmt.Println("Fallback case")
+		}
 	}
 }
 
 func main() {
-	http.HandleFunc("/slash", handleSlash)
-	http.HandleFunc("/modal", handleModal)
+	// Get token from environment variable
+	token := os.Getenv("SLACK_BOT_TOKEN")
+	if token == "" {
+		fmt.Println("SLACK_BOT_TOKEN environment variable is required")
+		os.Exit(1)
+	}
+
+	http.HandleFunc("/slash", handleSlash(token))
+	http.HandleFunc("/modal", handleModal(token))
 	http.ListenAndServe(":4390", nil)
 }

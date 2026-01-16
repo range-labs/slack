@@ -57,13 +57,15 @@ type authTestResponseFull struct {
 type ParamOption func(*url.Values)
 
 type Client struct {
-	token         string
-	appLevelToken string
-	endpoint      string
-	debug         bool
-	log           ilogger
-	httpclient    httpClient
-	onWarning     func(w *Warning, path string, values url.Values)
+	token              string
+	appLevelToken      string
+	configToken        string
+	configRefreshToken string
+	endpoint           string
+	debug              bool
+	log                ilogger
+	httpclient         httpClient
+	onWarning          func(w *Warning, path string, values url.Values)
 }
 
 // Option defines an option for a Client
@@ -90,13 +92,6 @@ func OptionLog(l logger) func(*Client) {
 	}
 }
 
-// OptionOnWarning set callback for response warnings.
-func OptionOnWarning(fn func(w *Warning, path string, values url.Values)) func(*Client) {
-	return func(c *Client) {
-		c.onWarning = fn
-	}
-}
-
 // OptionAPIURL set the url for the client. only useful for testing.
 func OptionAPIURL(u string) func(*Client) {
 	return func(c *Client) { c.endpoint = u }
@@ -105,6 +100,23 @@ func OptionAPIURL(u string) func(*Client) {
 // OptionAppLevelToken sets an app-level token for the client.
 func OptionAppLevelToken(token string) func(*Client) {
 	return func(c *Client) { c.appLevelToken = token }
+}
+
+// OptionConfigToken sets a configuration token for the client.
+func OptionConfigToken(token string) func(*Client) {
+	return func(c *Client) { c.configToken = token }
+}
+
+// OptionConfigRefreshToken sets a configuration refresh token for the client.
+func OptionConfigRefreshToken(token string) func(*Client) {
+	return func(c *Client) { c.configRefreshToken = token }
+}
+
+// OptionOnWarning set callback for response warnings.
+func OptionOnWarning(fn func(w *Warning, path string, values url.Values)) func(*Client) {
+	return func(c *Client) {
+		c.onWarning = fn
+	}
 }
 
 // New builds a slack client from the provided token and options.
@@ -162,6 +174,7 @@ func (api *Client) Debug() bool {
 // post to a slack web method.
 func (api *Client) postMethod(ctx context.Context, path string, values url.Values, intf interface{}) error {
 	err := postForm(ctx, api.httpclient, api.endpoint+path, values, intf, api)
+	// CUSTOM: Invoke warning callback if present
 	if w, ok := intf.(warner); ok {
 		if warning := w.Warn(); warning != nil && api.onWarning != nil {
 			api.onWarning(warning, path, values)
@@ -173,6 +186,7 @@ func (api *Client) postMethod(ctx context.Context, path string, values url.Value
 // get a slack web method.
 func (api *Client) getMethod(ctx context.Context, path string, token string, values url.Values, intf interface{}) error {
 	err := getResource(ctx, api.httpclient, api.endpoint+path, token, values, intf, api)
+	// CUSTOM: Invoke warning callback if present
 	if w, ok := intf.(warner); ok {
 		if warning := w.Warn(); warning != nil && api.onWarning != nil {
 			api.onWarning(warning, path, values)

@@ -6,31 +6,32 @@ import (
 	"os"
 	"strings"
 
-	"github.com/slack-go/slack/socketmode"
-
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 )
 
 func main() {
 	appToken := os.Getenv("SLACK_APP_TOKEN")
 	if appToken == "" {
-		fmt.Fprintf(os.Stderr, "SLACK_APP_TOKEN must be set.\n")
+		fmt.Fprintf(os.Stderr, "SLACK_APP_TOKEN environment variable is required\n")
 		os.Exit(1)
 	}
 
 	if !strings.HasPrefix(appToken, "xapp-") {
-		fmt.Fprintf(os.Stderr, "SLACK_APP_TOKEN must have the prefix \"xapp-\".")
+		fmt.Fprintf(os.Stderr, "SLACK_APP_TOKEN must have the prefix \"xapp-\"\n")
+		os.Exit(1)
 	}
 
 	botToken := os.Getenv("SLACK_BOT_TOKEN")
 	if botToken == "" {
-		fmt.Fprintf(os.Stderr, "SLACK_BOT_TOKEN must be set.\n")
+		fmt.Fprintf(os.Stderr, "SLACK_BOT_TOKEN environment variable is required\n")
 		os.Exit(1)
 	}
 
 	if !strings.HasPrefix(botToken, "xoxb-") {
-		fmt.Fprintf(os.Stderr, "SLACK_BOT_TOKEN must have the prefix \"xoxb-\".")
+		fmt.Fprintf(os.Stderr, "SLACK_BOT_TOKEN must have the prefix \"xoxb-\"\n")
+		os.Exit(1)
 	}
 
 	api := slack.New(
@@ -72,7 +73,7 @@ func main() {
 					innerEvent := eventsAPIEvent.InnerEvent
 					switch ev := innerEvent.Data.(type) {
 					case *slackevents.AppMentionEvent:
-						_, _, err := api.PostMessage(ev.Channel, slack.MsgOptionText("Yes, hello.", false))
+						_, _, err := client.PostMessage(ev.Channel, slack.MsgOptionText("Yes, hello.", false))
 						if err != nil {
 							fmt.Printf("failed posting message: %v", err)
 						}
@@ -137,9 +138,12 @@ func main() {
 								),
 							),
 						),
-					}}
+					},
+				}
 
 				client.Ack(*evt.Request, payload)
+			case socketmode.EventTypeHello:
+				client.Debugf("Hello received!")
 			default:
 				fmt.Fprintf(os.Stderr, "Unexpected event type received: %s\n", evt.Type)
 			}

@@ -2,13 +2,13 @@ package slack
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/draw"
 	"image/png"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"reflect"
@@ -33,22 +33,31 @@ func getTestUserProfileCustomFields() UserProfileCustomFields {
 		}}
 }
 
+func getTestUserProfileStatusEmojiDisplayInfo() []UserProfileStatusEmojiDisplayInfo {
+	return []UserProfileStatusEmojiDisplayInfo{{
+		EmojiName:  "construction",
+		Unicode:    "1f6a7",
+		DisplayURL: "https://a.slack-edge.com/production-standard-emoji-assets/14.0/apple-large/1f6a7.png",
+	}}
+}
+
 func getTestUserProfile() UserProfile {
 	return UserProfile{
-		StatusText:            "testStatus",
-		StatusEmoji:           ":construction:",
-		RealName:              "Test Real Name",
-		RealNameNormalized:    "Test Real Name Normalized",
-		DisplayName:           "Test Display Name",
-		DisplayNameNormalized: "Test Display Name Normalized",
-		Email:                 "test@test.com",
-		Image24:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_24.jpg",
-		Image32:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_32.jpg",
-		Image48:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_48.jpg",
-		Image72:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_72.jpg",
-		Image192:              "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_192.jpg",
-		Image512:              "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_512.jpg",
-		Fields:                getTestUserProfileCustomFields(),
+		StatusText:             "testStatus",
+		StatusEmoji:            ":construction:",
+		StatusEmojiDisplayInfo: getTestUserProfileStatusEmojiDisplayInfo(),
+		RealName:               "Test Real Name",
+		RealNameNormalized:     "Test Real Name Normalized",
+		DisplayName:            "Test Display Name",
+		DisplayNameNormalized:  "Test Display Name Normalized",
+		Email:                  "test@test.com",
+		Image24:                "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_24.jpg",
+		Image32:                "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_32.jpg",
+		Image48:                "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_48.jpg",
+		Image72:                "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_72.jpg",
+		Image192:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_192.jpg",
+		Image512:               "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2016-10-18/92962080834_ef14c1469fc0741caea1_512.jpg",
+		Fields:                 getTestUserProfileCustomFields(),
 	}
 }
 
@@ -400,27 +409,61 @@ func TestGetUsers(t *testing.T) {
 	once.Do(startServer)
 	api := New("testing-token", OptionAPIURL("http://"+serverAddr+"/"))
 
-	users, err := api.GetUsers()
-	if err != nil {
-		t.Errorf("Unexpected error: %s", err)
-		return
-	}
+	t.Run("Get all users", func(t *testing.T) {
 
-	if !reflect.DeepEqual([]User{
-		getTestUserWithId("U000"),
-		getTestUserWithId("U001"),
-		getTestUserWithId("U002"),
-		getTestUserWithId("U003"),
-	}, users) {
-		t.Fatal(ErrIncorrectResponse)
-	}
+		users, err := api.GetUsers()
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+			return
+		}
+
+		if !reflect.DeepEqual([]User{
+			getTestUserWithId("U000"),
+			getTestUserWithId("U001"),
+			getTestUserWithId("U002"),
+			getTestUserWithId("U003"),
+		}, users) {
+			t.Fatal(ErrIncorrectResponse)
+		}
+	})
+
+	t.Run("Get users with cursor", func(t *testing.T) {
+		page := api.GetUsersPaginated(GetUsersOptionCursor("2"), GetUsersOptionLimit(1))
+		nextPage, err := page.Next(context.TODO())
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+			return
+		}
+
+		if !reflect.DeepEqual([]User{
+			getTestUserWithId("U002"),
+		}, nextPage.Users) {
+			t.Fatal(ErrIncorrectResponse)
+		}
+
+		if nextPage.Cursor != "3" {
+			t.Fatal(ErrIncorrectResponse)
+		}
+	})
 }
 
 // returns n pages users.
 func getUserPage(max int64) func(rw http.ResponseWriter, r *http.Request) {
-	var n int64
 	return func(rw http.ResponseWriter, r *http.Request) {
-		var cpage int64
+		var (
+			n   int64
+			err error
+		)
+
+		_ = r.ParseForm()
+		if cursor := r.FormValue("cursor"); cursor != "" {
+			n, err = strconv.ParseInt(cursor, 10, 64)
+		}
+		if err != nil || n >= max { // invalid cursor
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		sresp := SlackResponse{
 			Ok: true,
 		}
@@ -428,7 +471,9 @@ func getUserPage(max int64) func(rw http.ResponseWriter, r *http.Request) {
 			getTestUserWithId(fmt.Sprintf("U%03d", n)),
 		}
 		rw.Header().Set("Content-Type", "application/json")
-		if cpage = atomic.AddInt64(&n, 1); cpage == max {
+
+		nextPage := n + 1
+		if nextPage == max {
 			response, _ := json.Marshal(userResponseFull{
 				SlackResponse: sresp,
 				Members:       members,
@@ -436,10 +481,11 @@ func getUserPage(max int64) func(rw http.ResponseWriter, r *http.Request) {
 			rw.Write(response)
 			return
 		}
+
 		response, _ := json.Marshal(userResponseFull{
 			SlackResponse: sresp,
 			Members:       members,
-			Metadata:      ResponseMetadata{Cursor: strconv.Itoa(int(cpage))},
+			Metadata:      ResponseMetadata{Cursor: strconv.Itoa(int(nextPage))},
 		})
 		rw.Write(response)
 	}
@@ -547,7 +593,7 @@ func setUserPhotoHandler(wantBytes []byte, wantParams UserSetPhotoParams) http.H
 			httpTestErrReply(w, true, fmt.Sprintf("failed to open uploaded file: %+v", err))
 			return
 		}
-		gotBytes, err := ioutil.ReadAll(file)
+		gotBytes, err := io.ReadAll(file)
 		if err != nil {
 			httpTestErrReply(w, true, fmt.Sprintf("failed to read uploaded file: %+v", err))
 			return
@@ -568,7 +614,7 @@ func createUserPhoto(t *testing.T) (*os.File, []byte, func()) {
 	photo := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	draw.Draw(photo, photo.Bounds(), image.Black, image.ZP, draw.Src)
 
-	f, err := ioutil.TempFile(os.TempDir(), "profile.png")
+	f, err := os.CreateTemp(os.TempDir(), "profile.png")
 	if err != nil {
 		t.Fatalf("failed to create test photo: %+v\n", err)
 	}
@@ -607,6 +653,9 @@ func TestGetUserProfile(t *testing.T) {
 	exp := getTestUserProfile()
 	if profile.DisplayName != exp.DisplayName {
 		t.Fatalf(`profile.DisplayName = "%s", wanted "%s"`, profile.DisplayName, exp.DisplayName)
+	}
+	if len(profile.StatusEmojiDisplayInfo) != 1 {
+		t.Fatalf(`expected 1 emoji, got %d`, len(profile.StatusEmojiDisplayInfo))
 	}
 }
 

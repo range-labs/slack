@@ -1,4 +1,4 @@
-Slack API in Go [![Go Reference](https://pkg.go.dev/badge/github.com/slack-go/slack.svg)](https://pkg.go.dev/github.com/slack-go/slack)
+Slack API in Go [![Go Reference](https://pkg.go.dev/badge/github.com/slack-go/slack.svg)](https://pkg.go.dev/github.com/slack-go/slack) [![CI](https://github.com/slack-go/slack/actions/workflows/test.yml/badge.svg)](https://github.com/slack-go/slack/actions/workflows/test.yml)
 ===============
 
 This is the original Slack library for Go created by Norberto Lopes, transferred to a GitHub organization.
@@ -15,7 +15,12 @@ a fully managed way.
 There is currently no major version released.
 Therefore, minor version releases may include backward incompatible changes.
 
-See [CHANGELOG.md](https://github.com/slack-go/slack/blob/master/CHANGELOG.md) or [Releases](https://github.com/slack-go/slack/releases) for more information about the changes.
+See [Releases](https://github.com/slack-go/slack/releases) for more information about the changes.
+
+## Go Versions supported
+
+We support the same versions of Go as the officially supported Go versions (see [Go
+Release Policy](https://go.dev/doc/devel/release#policy)).
 
 ## Installing
 
@@ -29,24 +34,24 @@ See [CHANGELOG.md](https://github.com/slack-go/slack/blob/master/CHANGELOG.md) o
 
 ```golang
 import (
-	"fmt"
+    "fmt"
 
-	"github.com/slack-go/slack"
+    "github.com/slack-go/slack"
 )
 
 func main() {
-	api := slack.New("YOUR_TOKEN_HERE")
-	// If you set debugging, it will log all requests to the console
-	// Useful when encountering issues
-	// slack.New("YOUR_TOKEN_HERE", slack.OptionDebug(true))
-	groups, err := api.GetUserGroups(false)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	}
-	for _, group := range groups {
-		fmt.Printf("ID: %s, Name: %s\n", group.ID, group.Name)
-	}
+    api := slack.New("YOUR_TOKEN_HERE")
+    // If you set debugging, it will log all requests to the console
+    // Useful when encountering issues
+    // slack.New("YOUR_TOKEN_HERE", slack.OptionDebug(true))
+    groups, err := api.GetUserGroups(slack.GetUserGroupsOptionIncludeUsers(false))
+    if err != nil {
+        fmt.Printf("%s\n", err)
+        return
+    }
+    for _, group := range groups {
+        fmt.Printf("ID: %s, Name: %s\n", group.ID, group.Name)
+    }
 }
 ```
 
@@ -63,8 +68,8 @@ func main() {
     api := slack.New("YOUR_TOKEN_HERE")
     user, err := api.GetUserInfo("U023BECGF")
     if err != nil {
-	    fmt.Printf("%s\n", err)
-	    return
+        fmt.Printf("%s\n", err)
+        return
     }
     fmt.Printf("ID: %s, Fullname: %s, Email: %s\n", user.ID, user.Profile.RealName, user.Profile.Email)
 }
@@ -86,7 +91,13 @@ See https://github.com/slack-go/slack/blob/master/examples/websocket/websocket.g
 
 See https://github.com/slack-go/slack/blob/master/examples/eventsapi/events.go
 
+## Socketmode Event Handler (Experimental)
 
+When using socket mode, dealing with an event can be pretty lengthy as it requires you to route the event to the right place.
+
+Instead, you can use `SocketmodeHandler` much like you use an HTTP handler to register which event you would like to listen to and what callback function will process that event when it occurs.
+
+See [./examples/socketmode_handler/socketmode_handler.go](./examples/socketmode_handler/socketmode_handler.go)
 ## Contributing
 
 You are more than welcome to contribute to this project.  Fork and
