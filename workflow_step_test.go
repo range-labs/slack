@@ -124,6 +124,7 @@ func configModalBlocks() Blocks {
 	inputBlock := NewInputBlock(
 		IDSelectOptionBlock,
 		NewTextBlockObject("plain_text", "Select an option", false, false),
+		nil, // hint
 		selection,
 	)
 
